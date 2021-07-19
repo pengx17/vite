@@ -32,17 +32,17 @@ export default function ({ types: t }: typeof babel): babel.PluginObj {
     const [nameNode, propsNode, ...childNodes] = node.arguments
 
     const name = getJSXName(nameNode)
-    if (name === null) {
+    if (name == null) {
       return null //name is required
     }
 
     const props = getJSXProps(propsNode)
-    if (props === null) {
+    if (props == null) {
       return null //no props → [], invalid → null
     }
 
     const children = getJSXChildren(childNodes)
-    if (children === null) {
+    if (children == null) {
       return null //no children → [], invalid → null
     }
 
@@ -83,7 +83,7 @@ export default function ({ types: t }: typeof babel): babel.PluginObj {
     }
 
     const name = getJSXIdentifier(node)
-    if (name !== null) {
+    if (name != null) {
       return name
     }
 
@@ -92,7 +92,7 @@ export default function ({ types: t }: typeof babel): babel.PluginObj {
     }
     const object = getJSXName(node.object)
     const property = getJSXName(node.property)
-    if (object === null || property === null) {
+    if (object == null || property == null) {
       return null
     }
     return t.jsxMemberExpression(object, property as t.JSXIdentifier)
@@ -114,7 +114,7 @@ export default function ({ types: t }: typeof babel): babel.PluginObj {
     ) {
       const props = node.arguments.map(getJSXProps)
       //if calling this recursively works, flatten.
-      if (props.every((prop) => prop !== null)) {
+      if (props.every((prop) => prop != null)) {
         return props as unknown as t.Node[]
       }
     }
@@ -225,15 +225,15 @@ export default function ({ types: t }: typeof babel): babel.PluginObj {
       (property) =>
         t.isSpreadElement(property) ||
         (t.isObjectProperty(property, { computed: false }) &&
-          getJSXIdentifier(property.key) !== null &&
-          getJSXAttributeValue(property.value) !== null)
+          getJSXIdentifier(property.key) != null &&
+          getJSXAttributeValue(property.value) != null)
     )
 
   return {
     visitor: {
       CallExpression(path) {
         const node = getJSXNode(path.node)
-        if (node === null) {
+        if (node == null) {
           return null
         }
         path.replaceWith(node)

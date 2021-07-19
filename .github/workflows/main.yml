@@ -6,9 +6,6 @@ env:
   NODE_OPTIONS: --max-old-space-size=6144
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
 
 jobs:
@@ -47,6 +44,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.node_version }}-${{ hashFiles('yarn.lock') }}
             ${{ runner.os }}-${{ matrix.node_version }}-
+
       - name: Versions
         run: yarn versions
 
@@ -58,6 +56,9 @@ jobs:
 
       - name: Build plugin-vue
         run: yarn build-plugin-vue
+
+      - name: Build plugin-react
+        run: yarn build-plugin-react
 
       - name: Test serve
         run: yarn test-serve --runInBand
@@ -86,10 +87,12 @@ jobs:
           restore-keys: |
             lint-dependencies-${{ hashFiles('yarn.lock') }}
             lint-dependencies-
+
       - name: Prepare
         run: |
           yarn install --frozen-lockfile
           yarn ci-build-vite
           yarn build-plugin-vue
+
       - name: Lint
         run: yarn lint

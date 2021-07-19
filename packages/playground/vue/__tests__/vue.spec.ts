@@ -18,6 +18,14 @@ test('should remove comments in prod', async () => {
   expect(await page.innerHTML('.comments')).toBe(isBuild ? `` : `<!--hello-->`)
 })
 
+test(':slotted', async () => {
+  expect(await getColor('.slotted')).toBe('red')
+})
+
+test('scan deps from <script setup lang="ts">', async () => {
+  expect(await page.textContent('.scan')).toBe('ok')
+})
+
 describe('pre-processors', () => {
   test('pug', async () => {
     expect(await page.textContent('p.pug')).toMatch(
@@ -133,6 +141,11 @@ describe('hmr', () => {
     )
     await untilUpdated(() => page.textContent('.hmr-inc'), 'count is 100')
   })
+
+  test('should re-render when template is emptied', async () => {
+    editFile('Hmr.vue', () => '')
+    await untilUpdated(() => page.innerHTML('.hmr-block'), '<!---->')
+  })
 })
 
 describe('src imports', () => {
@@ -167,5 +180,11 @@ describe('src imports', () => {
 describe('custom blocks', () => {
   test('should work', async () => {
     expect(await page.textContent('.custom-block')).toMatch('こんにちは')
+  })
+})
+
+describe('async component', () => {
+  test('should work', async () => {
+    expect(await page.textContent('.async-component')).toMatch('ab == ab')
   })
 })

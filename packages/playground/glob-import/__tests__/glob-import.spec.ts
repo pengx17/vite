@@ -30,14 +30,14 @@ const json = isBuild
 
 const allResult = {
   // JSON file should be properly transformed
-  './dir/baz.json': json,
-  './dir/foo.js': {
+  '/dir/baz.json': json,
+  '/dir/foo.js': {
     msg: 'foo'
   },
-  './dir/index.js': {
+  '/dir/index.js': {
     modules: filteredResult
   },
-  './dir/nested/bar.js': {
+  '/dir/nested/bar.js': {
     modules: {
       '../baz.json': json
     },
@@ -58,8 +58,14 @@ if (!isBuild) {
       () => page.textContent('.result'),
       JSON.stringify(
         {
-          './dir/a.js': {},
-          ...allResult
+          '/dir/a.js': {},
+          ...allResult,
+          '/dir/index.js': {
+            modules: {
+              './a.js': {},
+              ...allResult['/dir/index.js'].modules
+            }
+          }
         },
         null,
         2
@@ -72,10 +78,18 @@ if (!isBuild) {
       () => page.textContent('.result'),
       JSON.stringify(
         {
-          './dir/a.js': {
+          '/dir/a.js': {
             msg: 'a'
           },
-          ...allResult
+          ...allResult,
+          '/dir/index.js': {
+            modules: {
+              './a.js': {
+                msg: 'a'
+              },
+              ...allResult['/dir/index.js'].modules
+            }
+          }
         },
         null,
         2

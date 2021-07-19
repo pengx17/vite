@@ -6,9 +6,9 @@ import { chunkToEmittedCssFileMap } from './css'
 import { chunkToEmittedAssetsMap } from './asset'
 import { normalizePath } from '../utils'
 
-type Manifest = Record<string, ManifestChunk>
+export type Manifest = Record<string, ManifestChunk>
 
-interface ManifestChunk {
+export interface ManifestChunk {
   src?: string
   file: string
   css?: string[]
@@ -22,10 +22,15 @@ interface ManifestChunk {
 export function manifestPlugin(config: ResolvedConfig): Plugin {
   const manifest: Manifest = {}
 
-  let outputCount = 0
+  let outputCount: number
 
   return {
     name: 'vite:manifest',
+
+    buildStart() {
+      outputCount = 0
+    },
+
     generateBundle({ format }, bundle) {
       function getChunkName(chunk: OutputChunk) {
         if (chunk.facadeModuleId) {
@@ -40,6 +45,20 @@ export function manifestPlugin(config: ResolvedConfig): Plugin {
         } else {
           return `_` + path.basename(chunk.fileName)
         }
+      }
+
+      function getInternalImports(imports: string[]): string[] {
+        const filteredImports: string[] = []
+
+        for (const file of imports) {
+          if (bundle[file] === undefined) {
+            continue
+          }
+
+          filteredImports.push(getChunkName(bundle[file] as OutputChunk))
+        }
+
+        return filteredImports
       }
 
       function createChunk(chunk: OutputChunk): ManifestChunk {
@@ -58,15 +77,17 @@ export function manifestPlugin(config: ResolvedConfig): Plugin {
         }
 
         if (chunk.imports.length) {
-          manifestChunk.imports = chunk.imports.map((file) =>
-            getChunkName(bundle[file] as OutputChunk)
-          )
+          const internalImports = getInternalImports(chunk.imports)
+          if (internalImports.length > 0) {
+            manifestChunk.imports = internalImports
+          }
         }
 
         if (chunk.dynamicImports.length) {
-          manifestChunk.dynamicImports = chunk.dynamicImports.map((file) =>
-            getChunkName(bundle[file] as OutputChunk)
-          )
+          const internalImports = getInternalImports(chunk.dynamicImports)
+          if (internalImports.length > 0) {
+            manifestChunk.dynamicImports = internalImports
+          }
         }
 
         const cssFiles = chunkToEmittedCssFileMap.get(chunk)

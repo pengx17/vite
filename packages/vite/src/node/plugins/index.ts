@@ -10,9 +10,10 @@ import { assetPlugin } from './asset'
 import { clientInjectionsPlugin } from './clientInjections'
 import { htmlInlineScriptProxyPlugin } from './html'
 import { wasmPlugin } from './wasm'
-import { webWorkerPlugin } from './worker'
 import { dynamicImportPolyfillPlugin } from './dynamicImportPolyfill'
+import { webWorkerPlugin } from './worker'
 import { preAliasPlugin } from './preAlias'
+import { definePlugin } from './define'
 
 export async function resolvePlugins(
   config: ResolvedConfig,
@@ -28,16 +29,15 @@ export async function resolvePlugins(
 
   return [
     isBuild ? null : preAliasPlugin(),
-    aliasPlugin({ entries: config.alias }),
+    aliasPlugin({ entries: config.resolve.alias }),
     ...prePlugins,
-    config.build.polyfillDynamicImport
-      ? dynamicImportPolyfillPlugin(config)
-      : null,
+    dynamicImportPolyfillPlugin(config),
     resolvePlugin({
+      ...config.resolve,
       root: config.root,
-      dedupe: config.dedupe,
       isProduction: config.isProduction,
       isBuild,
+      ssrTarget: config.ssr?.target,
       asSrc: true
     }),
     htmlInlineScriptProxyPlugin(),
@@ -54,6 +54,7 @@ export async function resolvePlugins(
     webWorkerPlugin(config),
     assetPlugin(config),
     ...normalPlugins,
+    definePlugin(config),
     cssPostPlugin(config),
     ...buildPlugins.pre,
     ...postPlugins,

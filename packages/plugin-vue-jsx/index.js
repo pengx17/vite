@@ -2,13 +2,45 @@
 const babel = require('@babel/core')
 const jsx = require('@vue/babel-plugin-jsx')
 const importMeta = require('@babel/plugin-syntax-import-meta')
+const { createFilter, normalizePath } = require('@rollup/pluginutils')
 const hash = require('hash-sum')
+const path = require('path')
+
+const ssrRegisterHelperId = '/__vue-jsx-ssr-register-helper'
+const ssrRegisterHelperCode =
+  `import { useSSRContext } from "vue"\n` +
+  `export ${ssrRegisterHelper.toString()}`
 
 /**
- * @param {import('.').Options} options
+ * This function is serialized with toString() and evaluated as a virtual
+ * module during SSR
+ * @param {import('vue').ComponentOptions} comp
+ * @param {string} filename
+ */
+function ssrRegisterHelper(comp, filename) {
+  const setup = comp.setup
+  comp.setup = (props, ctx) => {
+    // @ts-ignore
+    const ssrContext = useSSRContext()
+    ;(ssrContext.modules || (ssrContext.modules = new Set())).add(filename)
+    if (setup) {
+      return setup(props, ctx)
+    }
+  }
+}
+
+/**
+ * @typedef { import('@rollup/pluginutils').FilterPattern} FilterPattern
+ * @typedef { { include?: FilterPattern, exclude?: FilterPattern, babelPlugins?: any[] } } CommonOptions
+ */
+
+/**
+ *
+ * @param {import('@vue/babel-plugin-jsx').VueJSXPluginOptions & CommonOptions} options
  * @returns {import('vite').Plugin}
  */
 function vueJsxPlugin(options = {}) {
+  let root = ''
   let needHmr = false
   let needSourceMap = true
 
@@ -33,11 +65,33 @@ function vueJsxPlugin(options = {}) {
     configResolved(config) {
       needHmr = config.command === 'serve' && !config.isProduction
       needSourceMap = config.command === 'serve' || !!config.build.sourcemap
+      root = config.root
     },
 
-    transform(code, id) {
-      if (/\.[jt]sx$/.test(id)) {
-        const plugins = [importMeta, [jsx, options]]
+    resolveId(id) {
+      if (id === ssrRegisterHelperId) {
+        return id
+      }
+    },
+
+    load(id) {
+      if (id === ssrRegisterHelperId) {
+        return ssrRegisterHelperCode
+      }
+    },
+
+    transform(code, id, ssr) {
+      const {
+        include,
+        exclude,
+        babelPlugins = [],
+        ...babelPluginOptions
+      } = options
+
+      const filter = createFilter(include || /\.[jt]sx$/, exclude)
+
+      if (filter(id)) {
+        const plugins = [importMeta, [jsx, babelPluginOptions], ...babelPlugins]
         if (id.endsWith('.tsx')) {
           plugins.push([
             require('@babel/plugin-transform-typescript'),
@@ -47,13 +101,15 @@ function vueJsxPlugin(options = {}) {
         }
 
         const result = babel.transformSync(code, {
+          babelrc: false,
           ast: true,
           plugins,
           sourceMaps: needSourceMap,
-          sourceFileName: id
+          sourceFileName: id,
+          configFile: false
         })
 
-        if (!needHmr) {
+        if (!ssr && !needHmr) {
           return {
             code: result.code,
             map: result.map
@@ -143,28 +199,41 @@ function vueJsxPlugin(options = {}) {
         }
 
         if (hotComponents.length) {
-          let code = result.code
-          if (hasDefault) {
-            code =
-              code.replace(
+          if (hasDefault && (needHmr || ssr)) {
+            result.code =
+              result.code.replace(
                 /export default defineComponent/g,
                 `const __default__ = defineComponent`
               ) + `\nexport default __default__`
           }
 
-          let callbackCode = ``
-          for (const { local, exported, id } of hotComponents) {
-            code +=
-              `\n${local}.__hmrId = "${id}"` +
-              `\n__VUE_HMR_RUNTIME__.createRecord("${id}", ${local})`
-            callbackCode += `\n__VUE_HMR_RUNTIME__.reload("${id}", __${exported})`
+          if (needHmr && !ssr) {
+            let code = result.code
+            let callbackCode = ``
+            for (const { local, exported, id } of hotComponents) {
+              code +=
+                `\n${local}.__hmrId = "${id}"` +
+                `\n__VUE_HMR_RUNTIME__.createRecord("${id}", ${local})`
+              callbackCode += `\n__VUE_HMR_RUNTIME__.reload("${id}", __${exported})`
+            }
+
+            code += `\nimport.meta.hot.accept(({${hotComponents
+              .map((c) => `${c.exported}: __${c.exported}`)
+              .join(',')}}) => {${callbackCode}\n})`
+
+            result.code = code
           }
 
-          code += `\nimport.meta.hot.accept(({${hotComponents
-            .map((c) => `${c.exported}: __${c.exported}`)
-            .join(',')}}) => {${callbackCode}\n})`
-
-          result.code = code
+          if (ssr) {
+            const normalizedId = normalizePath(path.relative(root, id))
+            let ssrInjectCode =
+              `\nimport { ssrRegisterHelper } from "${ssrRegisterHelperId}"` +
+              `\nconst __moduleId = ${JSON.stringify(normalizedId)}`
+            for (const { local } of hotComponents) {
+              ssrInjectCode += `\nssrRegisterHelper(${local}, __moduleId)`
+            }
+            result.code += ssrInjectCode
+          }
         }
 
         return {

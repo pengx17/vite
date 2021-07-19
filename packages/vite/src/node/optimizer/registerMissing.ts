@@ -1,14 +1,17 @@
 import chalk from 'chalk'
 import { optimizeDeps } from '.'
 import { ViteDevServer } from '..'
+import { resolveSSRExternal } from '../ssr/ssrExternal'
 
 /**
- * The amount to wait for requests to register newfound deps before triggering
+ * The amount to wait for requests to register newly found dependencies before triggering
  * a re-bundle + page reload
  */
 const debounceMs = 100
 
-export function createMissingImpoterRegisterFn(server: ViteDevServer) {
+export function createMissingImporterRegisterFn(
+  server: ViteDevServer
+): (id: string, resolved: string, ssr?: boolean) => void {
   const { logger } = server.config
   let knownOptimized = server._optimizeDepsMetadata!.optimized
   let currentMissing: Record<string, string> = {}
@@ -16,7 +19,7 @@ export function createMissingImpoterRegisterFn(server: ViteDevServer) {
 
   let pendingResolve: (() => void) | null = null
 
-  async function rerun() {
+  async function rerun(ssr: boolean | undefined) {
     const newDeps = currentMissing
     currentMissing = {}
 
@@ -45,9 +48,17 @@ export function createMissingImpoterRegisterFn(server: ViteDevServer) {
         server.config,
         true,
         false,
-        newDeps
+        newDeps,
+        ssr
       ))
       knownOptimized = newData!.optimized
+
+      // update ssr externals
+      server._ssrExternals = resolveSSRExternal(
+        server.config,
+        Object.keys(knownOptimized)
+      )
+
       logger.info(
         chalk.greenBright(`✨ dependencies updated, reloading page...`),
         { timestamp: true }
@@ -74,11 +85,15 @@ export function createMissingImpoterRegisterFn(server: ViteDevServer) {
     })
   }
 
-  return function registerMissingImport(id: string, resolved: string) {
+  return function registerMissingImport(
+    id: string,
+    resolved: string,
+    ssr?: boolean
+  ) {
     if (!knownOptimized[id]) {
       currentMissing[id] = resolved
       if (handle) clearTimeout(handle)
-      handle = setTimeout(rerun, debounceMs)
+      handle = setTimeout(() => rerun(ssr), debounceMs)
       server._pendingReload = new Promise((r) => {
         pendingResolve = r
       })

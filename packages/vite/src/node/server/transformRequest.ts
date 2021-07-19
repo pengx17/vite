@@ -15,6 +15,8 @@ import {
 } from '../utils'
 import { checkPublicFile } from '../plugins/asset'
 import { ssrTransform } from '../ssr/ssrTransform'
+import { injectSourcesContent } from './sourcemap'
+import { isFileServingAllowed } from './middlewares/static'
 
 const debugLoad = createDebugger('vite:load')
 const debugTransform = createDebugger('vite:transform')
@@ -30,13 +32,16 @@ export interface TransformResult {
 
 export interface TransformOptions {
   ssr?: boolean
+  html?: boolean
 }
 
 export async function transformRequest(
   url: string,
-  { config, pluginContainer, moduleGraph, watcher }: ViteDevServer,
+  server: ViteDevServer,
   options: TransformOptions = {}
 ): Promise<TransformResult | null> {
+  const { config, pluginContainer, moduleGraph, watcher } = server
+
   url = removeTimestampQuery(url)
   const { root, logger } = config
   const prettyUrl = isDebug ? prettifyUrl(url, root) : ''
@@ -62,15 +67,24 @@ export async function transformRequest(
   const loadStart = isDebug ? Date.now() : 0
   const loadResult = await pluginContainer.load(id, ssr)
   if (loadResult == null) {
+    // if this is an html request and there is no load result, skip ahead to
+    // SPA fallback.
+    if (options.html && !id.endsWith('.html')) {
+      return null
+    }
     // try fallback loading it from fs as string
     // if the file is a binary, there should be a plugin that already loaded it
     // as string
-    try {
-      code = await fs.readFile(file, 'utf-8')
-      isDebug && debugLoad(`${timeFrom(loadStart)} [fs] ${prettyUrl}`)
-    } catch (e) {
-      if (e.code !== 'ENOENT') {
-        throw e
+    // only try the fallback if access is allowed, skip for out of root url
+    // like /service-worker.js or /api/users
+    if (options.ssr || isFileServingAllowed(file, server)) {
+      try {
+        code = await fs.readFile(file, 'utf-8')
+        isDebug && debugLoad(`${timeFrom(loadStart)} [fs] ${prettyUrl}`)
+      } catch (e) {
+        if (e.code !== 'ENOENT') {
+          throw e
+        }
       }
     }
     if (code) {
@@ -129,8 +143,19 @@ export async function transformRequest(
     map = transformResult.map
   }
 
+  if (map && mod.file) {
+    map = (typeof map === 'string' ? JSON.parse(map) : map) as SourceMap
+    if (map.mappings && !map.sourcesContent) {
+      await injectSourcesContent(map, mod.file)
+    }
+  }
+
   if (ssr) {
-    return (mod.ssrTransformResult = await ssrTransform(code, map as SourceMap))
+    return (mod.ssrTransformResult = await ssrTransform(
+      code,
+      map as SourceMap,
+      url
+    ))
   } else {
     return (mod.transformResult = {
       code,

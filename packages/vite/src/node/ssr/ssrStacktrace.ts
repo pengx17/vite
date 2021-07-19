@@ -1,7 +1,21 @@
 import { SourceMapConsumer, RawSourceMap } from 'source-map'
 import { ModuleGraph } from '../server/moduleGraph'
 
-export function ssrRewriteStacktrace(stack: string, moduleGraph: ModuleGraph) {
+let offset: number
+try {
+  new Function('throw new Error(1)')()
+} catch (e) {
+  // in Node 12, stack traces account for the function wrapper.
+  // in Node 13 and later, the function wrapper adds two lines,
+  // which must be subtracted to generate a valid mapping
+  const match = /:(\d+):\d+\)$/.exec(e.stack.split('\n')[1])
+  offset = match ? +match[1] - 1 : 0
+}
+
+export function ssrRewriteStacktrace(
+  stack: string,
+  moduleGraph: ModuleGraph
+): string {
   return stack
     .split('\n')
     .map((line) => {
@@ -18,13 +32,11 @@ export function ssrRewriteStacktrace(stack: string, moduleGraph: ModuleGraph) {
           }
 
           const consumer = new SourceMapConsumer(
-            (rawSourceMap as any) as RawSourceMap
+            rawSourceMap as any as RawSourceMap
           )
 
           const pos = consumer.originalPositionFor({
-            // source map lines generated via new Function() in Node.js is always
-            // incremented by 2 due to the function wrapper
-            line: Number(line) - 2,
+            line: Number(line) - offset,
             column: Number(column),
             bias: SourceMapConsumer.LEAST_UPPER_BOUND
           })
@@ -43,4 +55,21 @@ export function ssrRewriteStacktrace(stack: string, moduleGraph: ModuleGraph) {
       )
     })
     .join('\n')
+}
+
+export function rebindErrorStacktrace(e: Error, stacktrace: string): void {
+  const { configurable, writable } = Object.getOwnPropertyDescriptor(
+    e,
+    'stack'
+  )!
+  if (configurable) {
+    Object.defineProperty(e, 'stack', {
+      value: stacktrace,
+      enumerable: true,
+      configurable: true,
+      writable: true
+    })
+  } else if (writable) {
+    e.stack = stacktrace
+  }
 }

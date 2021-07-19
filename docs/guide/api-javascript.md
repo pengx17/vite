@@ -4,13 +4,13 @@ Vite's JavaScript APIs are fully typed, and it's recommended to use TypeScript o
 
 ## `createServer`
 
-**Type Signature**
+**Type Signature:**
 
 ```ts
 async function createServer(inlineConfig?: InlineConfig): Promise<ViteDevServer>
 ```
 
-**Example Usage**
+**Example Usage:**
 
 ```js
 const { createServer } = require('vite')
@@ -32,38 +32,42 @@ const { createServer } = require('vite')
 
 The `InlineConfig` interface extends `UserConfig` with additional properties:
 
-- `mode`: override default mode (`'development'` for server)
 - `configFile`: specify config file to use. If not set, Vite will try to automatically resolve one from project root. Set to `false` to disable auto resolving.
+- `envFile`: Set to `false` to disable `.env` files.
 
 ## `ViteDevServer`
 
 ```ts
 interface ViteDevServer {
   /**
-   * The resolved vite config object
+   * The resolved vite config object.
    */
   config: ResolvedConfig
   /**
-   * connect app instance
-   * This can also be used as the handler function of a custom http server
+   * A connect app instance
+   * - Can be used to attach custom middlewares to the dev server.
+   * - Can also be used as the handler function of a custom http server
+   *   or as a middleware in any connect-style Node.js frameworks.
+   *
    * https://github.com/senchalabs/connect#use-middleware
    */
-  app: Connect.Server
+  middlewares: Connect.Server
   /**
-   * native Node http server instance
+   * Native Node http server instance.
+   * Will be null in middleware mode.
    */
-  httpServer: http.Server
+  httpServer: http.Server | null
   /**
-   * chokidar watcher instance
+   * Chokidar watcher instance.
    * https://github.com/paulmillr/chokidar#api
    */
   watcher: FSWatcher
   /**
-   * web socket server with `send(payload)` method
+   * Web socket server with `send(payload)` method.
    */
   ws: WebSocketServer
   /**
-   * Rollup plugin container that can run plugin hooks on a given file
+   * Rollup plugin container that can run plugin hooks on a given file.
    */
   pluginContainer: PluginContainer
   /**
@@ -75,17 +79,10 @@ interface ViteDevServer {
    * Programmatically resolve, load and transform a URL and get the result
    * without going through the http request pipeline.
    */
-  transformRequest(url: string): Promise<TransformResult | null>
-  /**
-   * Util for transforming a file with esbuild.
-   * Can be useful for certain plugins.
-   */
-  transformWithEsbuild(
-    code: string,
-    filename: string,
-    options?: EsbuildTransformOptions,
-    inMap?: object
-  ): Promise<EsbuildTransformResult>
+  transformRequest(
+    url: string,
+    options?: TransformOptions
+  ): Promise<TransformResult | null>
   /**
    * Apply vite built-in HTML transforms and any plugin HTML transforms.
    */
@@ -108,13 +105,13 @@ interface ViteDevServer {
     options?: { isolated?: boolean }
   ): Promise<Record<string, any>>
   /**
-   * Fix ssr error stacktrace
+   * Fix ssr error stacktrace.
    */
   ssrFixStacktrace(e: Error): void
   /**
    * Start the server.
    */
-  listen(port?: number): Promise<ViteDevServer>
+  listen(port?: number, isRestart?: boolean): Promise<ViteDevServer>
   /**
    * Stop the server.
    */
@@ -124,7 +121,7 @@ interface ViteDevServer {
 
 ## `build`
 
-**Type Signature**
+**Type Signature:**
 
 ```ts
 async function build(
@@ -132,7 +129,7 @@ async function build(
 ): Promise<RollupOutput | RollupOutput[]>
 ```
 
-**Example Usage**
+**Example Usage:**
 
 ```js
 const path = require('path')
@@ -153,11 +150,12 @@ const { build } = require('vite')
 
 ## `resolveConfig`
 
-**Type Signature**
+**Type Signature:**
 
 ```ts
 async function resolveConfig(
   inlineConfig: InlineConfig,
-  command: 'build' | 'serve'
+  command: 'build' | 'serve',
+  defaultMode?: string
 ): Promise<ResolvedConfig>
 ```

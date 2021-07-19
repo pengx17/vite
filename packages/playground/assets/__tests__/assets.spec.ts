@@ -5,7 +5,10 @@ import {
   getColor,
   isBuild,
   listAssets,
-  readManifest
+  readManifest,
+  readFile,
+  editFile,
+  notifyRebuildComplete
 } from '../../testUtils'
 
 const assetMatch = isBuild
@@ -81,6 +84,20 @@ describe('css url() references', () => {
     expect(await getBg('.css-url-relative')).toMatch(assetMatch)
   })
 
+  test('image-set relative', async () => {
+    const imageSet = await getBg('.css-image-set-relative')
+    imageSet.split(', ').forEach((s) => {
+      expect(s).toMatch(assetMatch)
+    })
+  })
+
+  test('image-set without the url() call', async () => {
+    const imageSet = await getBg('.css-image-set-without-url-call')
+    imageSet.split(', ').forEach((s) => {
+      expect(s).toMatch(assetMatch)
+    })
+  })
+
   test('relative in @import', async () => {
     expect(await getBg('.css-url-relative-at-imported')).toMatch(assetMatch)
   })
@@ -99,11 +116,36 @@ describe('css url() references', () => {
     expect(await getBg('.css-url-quotes-base64-inline')).toMatch(match)
   })
 
+  test('multiple urls on the same line', async () => {
+    const bg = await getBg('.css-url-same-line')
+    expect(bg).toMatch(assetMatch)
+    expect(bg).toMatch(iconMatch)
+  })
+
+  test('aliased', async () => {
+    const bg = await getBg('.css-url-aliased')
+    expect(bg).toMatch(assetMatch)
+  })
+
   if (isBuild) {
     test('preserve postfix query/hash', () => {
       expect(findAssetFile(/\.css$/, 'foo')).toMatch(`woff2?#iefix`)
     })
   }
+})
+
+describe('image', () => {
+  test('srcset', async () => {
+    const img = await page.$('.img-src-set')
+    const srcset = await img.getAttribute('srcset')
+    srcset.split(', ').forEach((s) => {
+      expect(s).toMatch(
+        isBuild
+          ? /\/foo\/assets\/asset\.\w{8}\.png \d{1}x/
+          : /\.\/nested\/asset\.png \d{1}x/
+      )
+    })
+  })
 })
 
 describe('svg fragments', () => {
@@ -131,13 +173,26 @@ test('?raw import', async () => {
 })
 
 test('?url import', async () => {
-  const src = `console.log('hi')\n`
+  const src = readFile('foo.js')
   expect(await page.textContent('.url')).toMatch(
     isBuild
       ? `data:application/javascript;base64,${Buffer.from(src).toString(
           'base64'
         )}`
       : `/foo/foo.js`
+  )
+})
+
+test('new URL(..., import.meta.url)', async () => {
+  expect(await page.textContent('.import-meta-url')).toMatch(assetMatch)
+})
+
+test('new URL(`${dynamic}`, import.meta.url)', async () => {
+  expect(await page.textContent('.dynamic-import-meta-url-1')).toMatch(
+    isBuild ? 'data:image/png;base64' : '/foo/nested/icon.png'
+  )
+  expect(await page.textContent('.dynamic-import-meta-url-2')).toMatch(
+    assetMatch
   )
 })
 
@@ -155,3 +210,15 @@ if (isBuild) {
     }
   })
 }
+describe('css and assets in css in build watch', () => {
+  if (isBuild) {
+    test('css will not be lost and css does not contain undefined', async () => {
+      editFile('index.html', (code) => code.replace('Assets', 'assets'), true)
+      await notifyRebuildComplete(watcher)
+      const cssFile = findAssetFile(/index\.\w+\.css$/, 'foo')
+      expect(cssFile).not.toBe('')
+      expect(cssFile).not.toMatch(/undefined/)
+      watcher?.close()
+    })
+  }
+})

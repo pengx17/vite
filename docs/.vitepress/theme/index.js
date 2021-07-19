@@ -2,6 +2,7 @@ import Theme from 'vitepress/theme'
 import { h } from 'vue'
 import sponsors from './sponsors.json'
 import './sponsors.css'
+import './custom.css'
 
 export default {
   ...Theme,
@@ -18,7 +19,7 @@ export default {
             },
             [h('span', 'Sponsors')]
           ),
-          ...sponsors.map(({ href, src, name }) =>
+          ...sponsors.map(({ href, src, name, id }) =>
             h(
               'a',
               {
@@ -27,7 +28,7 @@ export default {
                 rel: 'noopener',
                 'aria-label': 'sponsor-img'
               },
-              [h('img', { src, alt: name })]
+              [h('img', { src, alt: name, id: `sponsor-${id}` })]
             )
           )
         ])

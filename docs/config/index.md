@@ -4,7 +4,7 @@
 
 ### Config File Resolving
 
-When running `vite` from the command line, Vite will automatically try to resolve a config file named `vite.config.js` inside [project root](/guide/#project-root).
+When running `vite` from the command line, Vite will automatically try to resolve a config file named `vite.config.js` inside [project root](/guide/#index-html-and-project-root).
 
 The most basic config file looks like this:
 
@@ -15,7 +15,7 @@ export default {
 }
 ```
 
-Note Vite supports using ES modules syntax in the config file even if the project is not using native Node ESM via `type: "module"`. In this case the config file is auto pre-processed before load.
+Note Vite supports using ES modules syntax in the config file even if the project is not using native Node ESM via `type: "module"`. In this case, the config file is auto pre-processed before load.
 
 You can also explicitly specify a config file to use with the `--config` CLI option (resolved relative to `cwd`):
 
@@ -29,22 +29,26 @@ Since Vite ships with TypeScript typings, you can leverage your IDE's intellisen
 
 ```js
 /**
- * type {import('vite').UserConfig}
+ * @type {import('vite').UserConfig}
  */
-export default {
+const config = {
   // ...
 }
+
+export default config
 ```
 
-Vite also directly supports TS config files. You can use `vite.config.ts` instead:
+Alternatively, you can use the `defineConfig` helper which should provide intellisense without the need for jsdoc annotations:
 
-```ts
+```js
 import { defineConfig } from 'vite'
 
 export default defineConfig({
   // ...
 })
 ```
+
+Vite also directly supports TS config files. You can use `vite.config.ts` with the `defineConfig` helper as well.
 
 ### Conditional Config
 
@@ -64,39 +68,29 @@ export default ({ command, mode }) => {
 }
 ```
 
+### Async Config
+
+If the config needs to call async function, it can export a async function instead:
+
+```js
+export default async ({ command, mode }) => {
+  const data = await asyncFunction()
+  return {
+    // build specific config
+  }
+}
+```
+
 ## Shared Options
-
-### alias
-
-- **Type:**
-  `Record<string, string> | Array<{ find: string | RegExp, replacement: string }>`
-
-  Will be passed to `@rollup/plugin-alias` as its [entries option](https://github.com/rollup/plugins/tree/master/packages/alias#entries). Can either be an object, or an array of `{ find, replacement }` pairs.
-
-  When aliasing to file system paths, always use absolute paths. Relative alias values will be used as-is and will not be resolved into file system paths.
-
-  More advanced custom resolution can be achieved through [plugins](/guide/api-plugin).
-
-### define
-
-- **Type:** `Record<string, string>`
-
-  Define global variable replacements. Entries will be defined as globals during dev and statically replaced during build.
-
-### plugins
-
-- **Type:** ` (Plugin | Plugin[])[]`
-
-  Array of plugins to use. See [Plugin API](/guide/api-plugin) for more details on Vite plugins.
 
 ### root
 
 - **Type:** `string`
 - **Default:** `process.cwd()`
 
-  Project root directory (where `index.html` is located). Can be an absolute path, or a path relative from the location of the config file itself.
+  Project root directory (where `index.html` is located). Can be an absolute path, or a path relative to the location of the config file itself.
 
-  See [Project Root](/guide/#project-root) for more details.
+  See [Project Root](/guide/#index-html-and-project-root) for more details.
 
 ### base
 
@@ -111,21 +105,106 @@ export default ({ command, mode }) => {
 
   See [Public Base Path](/guide/build#public-base-path) for more details.
 
-### publicDir
-
-- **Type:** `string`
-- **Default:** `"public"`
-
-  Directory to serve as plain static assets. Files in this directory are served at `/` during dev and copied to the root of `outDir` during build, and are always served or copied as-is without transform. The value can be either an absolute file system path or a path relative to project root.
-
 ### mode
 
 - **Type:** `string`
 - **Default:** `'development'` for serve, `'production'` for build
 
-  Specifying this in config will override the default mode for both serve and build. This value can also be overridden via the command line `--mode` option.
+  Specifying this in config will override the default mode for **both serve and build**. This value can also be overridden via the command line `--mode` option.
 
   See [Env Variables and Modes](/guide/env-and-mode) for more details.
+
+### define
+
+- **Type:** `Record<string, string>`
+
+  Define global constant replacements. Entries will be defined as globals during dev and statically replaced during build.
+
+  - Starting from `2.0.0-beta.70`, string values will be used as raw expressions, so if defining a string constant, it needs to be explicitly quoted (e.g. with `JSON.stringify`).
+
+  - Replacements are performed only when the match is surrounded by word boundaries (`\b`).
+
+  Because it's implemented as straightforward text replacements without any syntax analysis, we recommend using `define` for CONSTANTS only.
+
+  For example, `process.env.FOO` and `__APP_VERSION__` are good fits. But `process` or `global` should not be put into this option. Variables can be shimmed or polyfilled instead.
+
+### plugins
+
+- **Type:** ` (Plugin | Plugin[])[]`
+
+  Array of plugins to use. Falsy plugins are ignored and arrays of plugins are flattened. See [Plugin API](/guide/api-plugin) for more details on Vite plugins.
+
+### publicDir
+
+- **Type:** `string | false`
+- **Default:** `"public"`
+
+  Directory to serve as plain static assets. Files in this directory are served at `/` during dev and copied to the root of `outDir` during build, and are always served or copied as-is without transform. The value can be either an absolute file system path or a path relative to project root.
+
+  Defining `publicDir` as `false` disables this feature.
+
+  See [The `public` Directory](/guide/assets#the-public-directory) for more details.
+
+### cacheDir
+
+- **Type:** `string`
+- **Default:** `"node_modules/.vite"`
+
+  Directory to save cache files. Files in this directory are pre-bundled deps or some other cache files generated by vite, which can improve the performance. You can use `--force` flag or manually delete the directory to regenerate the cache files. The value can be either an absolute file system path or a path relative to project root.
+
+### resolve.alias
+
+- **Type:**
+  `Record<string, string> | Array<{ find: string | RegExp, replacement: string }>`
+
+  Will be passed to `@rollup/plugin-alias` as its [entries option](https://github.com/rollup/plugins/tree/master/packages/alias#entries). Can either be an object, or an array of `{ find, replacement }` pairs.
+
+  When aliasing to file system paths, always use absolute paths. Relative alias values will be used as-is and will not be resolved into file system paths.
+
+  More advanced custom resolution can be achieved through [plugins](/guide/api-plugin).
+
+### resolve.dedupe
+
+- **Type:** `string[]`
+
+  If you have duplicated copies of the same dependency in your app (likely due to hoisting or linked packages in monorepos), use this option to force Vite to always resolve listed dependencies to the same copy (from project root).
+
+### resolve.conditions
+
+- **Type:** `string[]`
+
+  Additional allowed conditions when resolving [Conditional Exports](https://nodejs.org/api/packages.html#packages_conditional_exports) from a package.
+
+  A package with conditional exports may have the following `exports` field in its `package.json`:
+
+  ```json
+  {
+    "exports": {
+      ".": {
+        "import": "./index.esm.js",
+        "require": "./index.cjs.js"
+      }
+    }
+  }
+  ```
+
+  Here, `import` and `require` are "conditions". Conditions can be nested and should be specified from most specific to least specific.
+
+  Vite has a list of "allowed conditions" and will match the first condition that is in the allowed list. The default allowed conditions are: `import`, `module`, `browser`, `default`, and `production/development` based on current mode. The `resolve.conditions` config option allows specifying additional allowed conditions.
+
+### resolve.mainFields
+
+- **Type:** `string[]`
+- **Default:** `['module', 'jsnext:main', 'jsnext']`
+
+  List of fields in `package.json` to try when resolving a package's entry point. Note this takes lower precedence than conditional exports resolved from the `exports` field: if an entry point is successfully resolved from `exports`, the main field will be ignored.
+
+### resolve.extensions
+
+- **Type:** `string[]`
+- **Default:** `['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json']`
+
+  List of file extensions to try for imports that omit extensions. Note it is **NOT** recommended to omit extensions for custom import types (e.g. `.vue`) since it can interfere with IDE and type support.
 
 ### css.modules
 
@@ -186,7 +265,7 @@ export default ({ command, mode }) => {
 - **Type:** `boolean`
 - **Default:** `false`
 
-  If set to `true`, imported JSON will be transformed into `export default JSON.parse("...")` which is significantly more performant than Object literals, espeically when the JSON file is large.
+  If set to `true`, imported JSON will be transformed into `export default JSON.parse("...")` which is significantly more performant than Object literals, especially when the JSON file is large.
 
   Enabling this disables named imports.
 
@@ -205,7 +284,7 @@ export default ({ command, mode }) => {
   }
   ```
 
-  By default, ESBuild is applied to `ts`, `jsx` and `tsx` files. You can customize this with `esbuild.include` and `esbuild.exclude`, both of which expects type of `string | RegExp | (string | RegExp)[]`.
+  By default, ESBuild is applied to `ts`, `jsx` and `tsx` files. You can customize this with `esbuild.include` and `esbuild.exclude`, both of which expect type of `string | RegExp | (string | RegExp)[]`.
 
   In addition, you can also use `esbuild.jsxInject` to automatically inject JSX helper imports for every file transformed by ESBuild:
 
@@ -232,13 +311,6 @@ export default ({ command, mode }) => {
 
   The built-in asset type list can be found [here](https://github.com/vitejs/vite/blob/main/packages/vite/src/node/constants.ts).
 
-### dedupe
-
-- **Type:** `string[]`
-
-  If you have duplicated copies of the same dependency in your app (likely due to hoisting or linked packages in monorepos), use this option to force Vite to always resolve listed dependencies to the same copy (from
-  project root).
-
 ### logLevel
 
 - **Type:** `'info' | 'warn' | 'error' | 'silent'`
@@ -252,13 +324,26 @@ export default ({ command, mode }) => {
 
   Set to `false` to prevent Vite from clearing the terminal screen when logging certain messages. Via command line, use `--clearScreen false`.
 
+### envDir
+
+- **Type:** `string`
+- **Default:** `root`
+
+  The directory from which `.env` files are loaded. Can be an absolute path, or a path relative to the project root.
+
+  See [here](/guide/env-and-mode#env-files) for more about environment files.
+
 ## Server Options
 
 ### server.host
 
 - **Type:** `string`
+- **Default:** `'127.0.0.1'`
 
-  Specify server hostname.
+  Specify which IP addresses the server should listen on.
+  Set this to `0.0.0.0` to listen on all addresses, including LAN and public addresses.
+
+  This can be set via the CLI using `--host 0.0.0.0` or `--host`.
 
 ### server.port
 
@@ -284,7 +369,7 @@ export default ({ command, mode }) => {
 
 - **Type:** `boolean | string`
 
-  Automatically open the app in the browser on server start. When the value is a string, it will be used as the URL's pathname.
+  Automatically open the app in the browser on server start. When the value is a string, it will be used as the URL's pathname. If you want to open the server in a specific browser you like, you can set the env `process.env.BROWSER` (e.g. `firefox`). See [the `open` package](https://github.com/sindresorhus/open#app) for more details.
 
   **Example:**
 
@@ -300,7 +385,7 @@ export default ({ command, mode }) => {
 
 - **Type:** `Record<string, string | ProxyOptions>`
 
-  Configure custom proxy rules for the dev server. Expects an object of `{ key: options }` pairs. If the key starts with `^`, it will be interpreted as a `RegExp`.
+  Configure custom proxy rules for the dev server. Expects an object of `{ key: options }` pairs. If the key starts with `^`, it will be interpreted as a `RegExp`. The `configure` option can be used to access the proxy instance.
 
   Uses [`http-proxy`](https://github.com/http-party/node-http-proxy). Full options [here](https://github.com/http-party/node-http-proxy#options).
 
@@ -317,12 +402,20 @@ export default ({ command, mode }) => {
           target: 'http://jsonplaceholder.typicode.com',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api/, '')
-        }
+        },
         // with RegEx
         '^/fallback/.*': {
           target: 'http://jsonplaceholder.typicode.com',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/fallback/, '')
+        },
+        // Using the proxy instance
+        '/api': {
+          target: 'http://jsonplaceholder.typicode.com',
+          changeOrigin: true,
+          configure: (proxy, options) => {
+            // proxy will be an instance of 'http-proxy'
+          }),
         }
       }
     }
@@ -344,17 +437,92 @@ export default ({ command, mode }) => {
 
 ### server.hmr
 
-- **Type:** `boolean | { protocol?: string, host?: string, port?: number, path?: string, timeout?: number, overlay?: boolean }`
+- **Type:** `boolean | { protocol?: string, host?: string, port?: number, path?: string, timeout?: number, overlay?: boolean, clientPort?: number, server?: Server }`
 
   Disable or configure HMR connection (in cases where the HMR websocket must use a different address from the http server).
 
   Set `server.hmr.overlay` to `false` to disable the server error overlay.
+
+  `clientPort` is an advanced option that overrides the port only on the client side, allowing you to serve the websocket on a different port than the client code looks for it on. Useful if you're using an SSL proxy in front of your dev server.
+
+  When using `server.middlewareMode` and `server.https`, setting `server.hmr.server` to your HTTPS server will process HMR secure connection requests through your server. This can be helpful when using self-signed certificates.
 
 ### server.watch
 
 - **Type:** `object`
 
   File system watcher options to pass on to [chokidar](https://github.com/paulmillr/chokidar#api).
+
+### server.middlewareMode
+
+- **Type:** `'ssr' | 'html'`
+
+  Create Vite server in middleware mode. (without a HTTP server)
+
+  - `'ssr'` will disable Vite's own HTML serving logic so that you should serve `index.html` manually.
+  - `'html'` will enable Vite's own HTML serving logic.
+
+- **Related:** [SSR - Setting Up the Dev Server](/guide/ssr#setting-up-the-dev-server)
+
+- **Example:**
+
+```js
+const express = require('express')
+const { createServer: createViteServer } = require('vite')
+
+async function createServer() {
+  const app = express()
+
+  // Create vite server in middleware mode.
+  const vite = await createViteServer({
+    server: { middlewareMode: 'ssr' }
+  })
+  // Use vite's connect instance as middleware
+  app.use(vite.middlewares)
+
+  app.use('*', async (req, res) => {
+    // If `middlewareMode` is `'ssr'`, should serve `index.html` here.
+    // If `middlewareMode` is `'html'`, there is no need to serve `index.html`
+    // because Vite will do that.
+  })
+}
+
+createServer()
+```
+
+### server.fs.strict
+
+- **Experimental**
+- **Type:** `boolean`
+- **Default:** `false` (will change to `true` in future versions)
+
+  Restrict serving files outside of workspace root.
+
+### server.fs.allow
+
+- **Experimental**
+- **Type:** `string[]`
+
+  Restrict files that could be served via `/@fs/`. When `server.fs.strict` is set to `true`, accessing files outside this directory list will result in a 403.
+
+  Vite will search for the root of the potential workspace and use it as default. A valid workspace met the following conditions, otherwise will fallback to the [project root](/guide/#index-html-and-project-root).
+
+  - contains `workspaces` field in `package.json`
+  - contains one of the following file
+    - `pnpm-workspace.yaml`
+
+  Accepts a path to specify the custom workspace root. Could be a absolute path or a path relative to [project root](/guide/#index-html-and-project-root). For example
+
+  ```js
+  export default {
+    server: {
+      fs: {
+        // Allow serving files from one level up to the project root
+        allow: ['..']
+      }
+    }
+  }
+  ```
 
 ## Build Options
 
@@ -366,24 +534,29 @@ export default ({ command, mode }) => {
 
   Browser compatibility target for the final bundle. The default value is a Vite special value, `'modules'`, which targets [browsers with native ES module support](https://caniuse.com/es6-module).
 
-  Another special value is 'esnext' - which only performs minimal trasnpiling (for minification compat) and assumes native dynamic imports support.
+  Another special value is `'esnext'` - which assumes native dynamic imports support and will transpile as little as possible:
+
+  - If the [`build.minify`](#build-minify) option is `'terser'` (the default), `'esnext'` will be forced down to `'es2019'`.
+  - In other cases, it will perform no transpilation at all.
 
   The transform is performed with esbuild and the value should be a valid [esbuild target option](https://esbuild.github.io/api/#target). Custom targets can either be a ES version (e.g. `es2015`), a browser with version (e.g. `chrome58`), or an array of multiple target strings.
 
-  Note the build will fail if the code contains features that cannot be safely transpiled by esbuild. See [esbuid docs](https://esbuild.github.io/content-types/#javascript) for more details.
+  Note the build will fail if the code contains features that cannot be safely transpiled by esbuild. See [esbuild docs](https://esbuild.github.io/content-types/#javascript) for more details.
 
 ### build.polyfillDynamicImport
 
 - **Type:** `boolean`
-- **Default:** `true` unless `build.target` is `'esnext'`
+- **Default:** `false`
 
   Whether to automatically inject [dynamic import polyfill](https://github.com/GoogleChromeLabs/dynamic-import-polyfill).
 
-  The polyfill is auto injected into the proxy module of each `index.html` entry. If the build is configured to use a non-html custom entry via `build.rollupOptions.input`, then it is necessary to manually import the polyfill in your custom entry:
+  If set to true, the polyfill is auto injected into the proxy module of each `index.html` entry. If the build is configured to use a non-html custom entry via `build.rollupOptions.input`, then it is necessary to manually import the polyfill in your custom entry:
 
   ```js
   import 'vite/dynamic-import-polyfill'
   ```
+
+  When using [`@vitejs/plugin-legacy`](https://github.com/vitejs/vite/tree/main/packages/plugin-legacy), the plugin sets this option to `true` automatically.
 
   Note: the polyfill does **not** apply to [Library Mode](/guide/build#library-mode). If you need to support browsers without native dynamic import, you should probably avoid using it in your library.
 
@@ -392,7 +565,7 @@ export default ({ command, mode }) => {
 - **Type:** `string`
 - **Default:** `dist`
 
-  Specify the output directory (relative to [project root](/guide/#project-root)).
+  Specify the output directory (relative to [project root](/guide/#index-html-and-project-root)).
 
 ### build.assetsDir
 
@@ -408,6 +581,10 @@ export default ({ command, mode }) => {
 
   Imported or referenced assets that are smaller than this threshold will be inlined as base64 URLs to avoid extra http requests. Set to `0` to disable inlining altogether.
 
+  ::: tip Note
+  If you specify `build.lib`, `build.assetsInlineLimit` will be ignored and assets will always be inlined, regardless of file size.
+  :::
+
 ### build.cssCodeSplit
 
 - **Type:** `boolean`
@@ -419,7 +596,7 @@ export default ({ command, mode }) => {
 
 ### build.sourcemap
 
-- **Type:** `boolean`
+- **Type:** `boolean | 'inline' | 'hidden'`
 - **Default:** `false`
 
   Generate production source maps.
@@ -436,12 +613,18 @@ export default ({ command, mode }) => {
 
   Options to pass on to [@rollup/plugin-commonjs](https://github.com/rollup/plugins/tree/master/packages/commonjs).
 
+### build.dynamicImportVarsOptions
+
+- **Type:** [`RollupDynamicImportVarsOptions`](https://github.com/rollup/plugins/tree/master/packages/dynamic-import-vars#options)
+
+  Options to pass on to [@rollup/plugin-dynamic-import-vars](https://github.com/rollup/plugins/tree/master/packages/dynamic-import-vars).
+
 ### build.lib
 
-- **Type:** `{ entry: string, name?: string, formats?: ('es' | 'cjs' | 'umd' | 'iife')[] }`
+- **Type:** `{ entry: string, name?: string, formats?: ('es' | 'cjs' | 'umd' | 'iife')[], fileName?: string | ((format: ModuleFormat) => string) }`
 - **Related:** [Library Mode](/guide/build#library-mode)
 
-  Build as a library. `entry` is required since the library cannot use HTML as entry. `name` is the exposed global variable and is required when `formats` includes `'umd'` or `'iife'`. Default `formats` are `['es', 'umd']`.
+  Build as a library. `entry` is required since the library cannot use HTML as entry. `name` is the exposed global variable and is required when `formats` includes `'umd'` or `'iife'`. Default `formats` are `['es', 'umd']`. `fileName` is the name of the package file output, default `fileName` is the name option of package.json, it can also be defined as function taking the `format` as an argument.
 
 ### build.manifest
 
@@ -449,14 +632,14 @@ export default ({ command, mode }) => {
 - **Default:** `false`
 - **Related:** [Backend Integration](/guide/backend-integration)
 
-  When set to `true`, the build will also generate a `manifest.json` file that contains mapping of non-hashed asset filenames to their hashed versions, which can then be used by a server framework to render the correct asset links.
+  When set to `true`, the build will also generate a `manifest.json` file that contains a mapping of non-hashed asset filenames to their hashed versions, which can then be used by a server framework to render the correct asset links.
 
 ### build.minify
 
 - **Type:** `boolean | 'terser' | 'esbuild'`
 - **Default:** `'terser'`
 
-  Set to `false` to disable minification, or specify the minifier to use. The default is [Terser](https://github.com/terser/terser) which is slower but produces smaller bundles in most cases. Esbuild minification is significantly faster, but will result in slightly larger bundles.
+  Set to `false` to disable minification, or specify the minifier to use. The default is [Terser](https://github.com/terser/terser) which is slower but produces smaller bundles in most cases. Esbuild minification is significantly faster but will result in slightly larger bundles.
 
 ### build.terserOptions
 
@@ -498,6 +681,13 @@ export default ({ command, mode }) => {
 
   Limit for chunk size warnings (in kbs).
 
+### build.watch
+
+- **Type:** [`WatcherOptions`](https://rollupjs.org/guide/en/#watch-options)`| null`
+- **Default:** `null`
+
+  Set to `{}` to enable rollup watcher. This is mostly used in cases that involve build-only plugins or integrations processes.
+
 ## Dep Optimization Options
 
 - **Related:** [Dependency Pre-Bundling](/guide/dep-pre-bundling)
@@ -516,15 +706,32 @@ export default ({ command, mode }) => {
 
   Dependencies to exclude from pre-bundling.
 
+  :::warning CommonJS
+  CommonJS dependencies should not be excluded from optimization. If an ESM dependency has a nested CommonJS dependency, it should not be excluded as well.
+  :::
+
 ### optimizeDeps.include
 
 - **Type:** `string[]`
 
   By default, linked packages not inside `node_modules` are not pre-bundled. Use this option to force a linked package to be pre-bundled.
 
+### optimizeDeps.keepNames
+
+- **Type:** `boolean`
+- **Default:** `false`
+
+  The bundler sometimes needs to rename symbols to avoid collisions.
+  Set this to `true` to keep the `name` property on functions and classes.
+  See [`keepNames`](https://esbuild.github.io/api/#keep-names).
+
 ## SSR Options
 
-- **Related:** [SSR Externals Heuristics](/guide/ssr#externals-heuristics)
+:::warning Experimental
+SSR options may be adjusted in minor releases.
+:::
+
+- **Related:** [SSR Externals](/guide/ssr#ssr-externals)
 
 ### ssr.external
 
@@ -534,6 +741,13 @@ export default ({ command, mode }) => {
 
 ### ssr.noExternal
 
-- **Type:** `string[]`
+- **Type:** `string | RegExp | (string | RegExp)[]`
 
   Prevent listed dependencies from being externalized for SSR.
+
+### ssr.target
+
+- **Type:** `'node' | 'webworker'`
+- **Default:** `node`
+
+  Build target for the SSR server.

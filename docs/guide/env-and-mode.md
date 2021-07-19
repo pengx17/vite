@@ -24,7 +24,7 @@ It will also replace these strings appearing in JavaScript strings and Vue templ
 
 ## `.env` Files
 
-Vite uses [dotenv](https://github.com/motdotla/dotenv) to load additional environment variables from the following files in your project root:
+Vite uses [dotenv](https://github.com/motdotla/dotenv) to load additional environment variables from the following files in your [environment directory](/config/#envdir):
 
 ```
 .env                # loaded in all cases
@@ -50,6 +50,19 @@ Only `VITE_SOME_KEY` will be exposed as `import.meta.env.VITE_SOME_KEY` to your 
 
 - Since any variables exposed to your Vite source code will end up in your client bundle, `VITE_*` variables should _not_ contain any sensitive information.
   :::
+
+### IntelliSense
+
+By default, Vite provides type definition for `import.meta.env`. While you can define more custom env variables in `.env.[mode]` files, you may want to get TypeScript IntelliSense for user-defined env variables which prefixed with `VITE_`.
+
+To achieve, you can create an `env.d.ts` in `src` directory, then augment `ImportMetaEnv` like this:
+
+```typescript
+interface ImportMetaEnv {
+  VITE_APP_TITLE: string
+  // more env variables...
+}
+```
 
 ## Modes
 

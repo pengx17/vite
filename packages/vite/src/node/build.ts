@@ -12,10 +12,13 @@ import Rollup, {
   RollupOutput,
   ExternalOption,
   GetManualChunk,
-  GetModuleInfo
+  GetModuleInfo,
+  WatcherOptions,
+  RollupWatcher,
+  RollupError,
+  ModuleFormat
 } from 'rollup'
 import { buildReporterPlugin } from './plugins/reporter'
-import { buildDefinePlugin } from './plugins/define'
 import { buildHtmlPlugin } from './plugins/html'
 import { buildEsbuildPlugin } from './plugins/esbuild'
 import { terserPlugin } from './plugins/terser'
@@ -25,14 +28,18 @@ import { manifestPlugin } from './plugins/manifest'
 import commonjsPlugin from '@rollup/plugin-commonjs'
 import { RollupCommonJSOptions } from 'types/commonjs'
 import dynamicImportVars from '@rollup/plugin-dynamic-import-vars'
+import { RollupDynamicImportVarsOptions } from 'types/dynamicImportVars'
 import { Logger } from './logger'
 import { TransformOptions } from 'esbuild'
 import { CleanCSS } from 'types/clean-css'
 import { dataURIPlugin } from './plugins/dataUri'
-import { buildImportAnalysisPlugin } from './plugins/importAnaysisBuild'
+import { buildImportAnalysisPlugin } from './plugins/importAnalysisBuild'
 import { resolveSSRExternal, shouldExternalizeForSSR } from './ssr/ssrExternal'
 import { ssrManifestPlugin } from './ssr/ssrManifestPlugin'
 import { isCSSRequest } from './plugins/css'
+import { DepOptimizationMetadata } from './optimizer'
+import { scanImports } from './optimizer/scan'
+import { assetImportMetaUrlPlugin } from './plugins/assetImportMetaUrl'
 
 export interface BuildOptions {
   /**
@@ -47,11 +54,10 @@ export interface BuildOptions {
    * import)
    *
    * Default: 'modules' - Similar to `@babel/preset-env`'s targets.esmodules,
-   * transpile targeting browsers that natively support es module imports. Also
-   * injects a light-weight dynamic import polyfill.
-   * https://caniuse.com/es6-module
+   * transpile targeting browsers that natively support dynamic es module imports.
+   * https://caniuse.com/es6-module-dynamic-import
    *
-   * Another special value is 'esnext' - which only performs minimal trasnpiling
+   * Another special value is 'esnext' - which only performs minimal transpiling
    * (for minification compat) and assumes native dynamic imports support.
    *
    * For custom targets, see https://esbuild.github.io/api/#target and
@@ -59,9 +65,9 @@ export interface BuildOptions {
    */
   target?: 'modules' | TransformOptions['target'] | false
   /**
-   * Whether to inject dynamic import polyfill. Defaults to `true`, unless
-   * `target` is `'esnext'`.
+   * whether to inject dynamic import polyfill.
    * Note: does not apply to library mode.
+   * @default false
    */
   polyfillDynamicImport?: boolean
   /**
@@ -90,10 +96,13 @@ export interface BuildOptions {
    */
   cssCodeSplit?: boolean
   /**
-   * Whether to generate sourcemap
+   * If `true`, a separate sourcemap file will be created. If 'inline', the
+   * sourcemap will be appended to the resulting output file as data URI.
+   * 'hidden' works like `true` except that the corresponding sourcemap
+   * comments in the bundled files are suppressed.
    * @default false
    */
-  sourcemap?: boolean | 'inline'
+  sourcemap?: boolean | 'inline' | 'hidden'
   /**
    * Set to `false` to disable minification, or specify the minifier to use.
    * Available options are 'terser' or 'esbuild'.
@@ -119,6 +128,10 @@ export interface BuildOptions {
    * Options to pass on to `@rollup/plugin-commonjs`
    */
   commonjsOptions?: RollupCommonJSOptions
+  /**
+   * Options to pass on to `@rollup/plugin-dynamic-import-vars`
+   */
+  dynamicImportVarsOptions?: RollupDynamicImportVarsOptions
   /**
    * Whether to write bundle to disk
    * @default true
@@ -175,12 +188,18 @@ export interface BuildOptions {
    * @default 500
    */
   chunkSizeWarningLimit?: number
+  /**
+   * Rollup watch options
+   * https://rollupjs.org/guide/en/#watchoptions
+   */
+  watch?: WatcherOptions | null
 }
 
 export interface LibraryOptions {
   entry: string
   name?: string
   formats?: LibraryFormats[]
+  fileName?: string | ((format: ModuleFormat) => string)
 }
 
 export type LibraryFormats = 'es' | 'cjs' | 'umd' | 'iife'
@@ -190,7 +209,7 @@ export type ResolvedBuildOptions = Required<Omit<BuildOptions, 'base'>>
 export function resolveBuildOptions(raw?: BuildOptions): ResolvedBuildOptions {
   const resolved: ResolvedBuildOptions = {
     target: 'modules',
-    polyfillDynamicImport: raw?.target !== 'esnext' && !raw?.lib,
+    polyfillDynamicImport: false,
     outDir: 'dist',
     assetsDir: 'assets',
     assetsInlineLimit: 4096,
@@ -201,6 +220,11 @@ export function resolveBuildOptions(raw?: BuildOptions): ResolvedBuildOptions {
       include: [/node_modules/],
       extensions: ['.js', '.cjs'],
       ...raw?.commonjsOptions
+    },
+    dynamicImportVarsOptions: {
+      warnOnError: true,
+      exclude: [/node_modules/],
+      ...raw?.dynamicImportVarsOptions
     },
     minify: raw?.ssr ? false : 'terser',
     terserOptions: {},
@@ -213,14 +237,22 @@ export function resolveBuildOptions(raw?: BuildOptions): ResolvedBuildOptions {
     ssrManifest: false,
     brotliSize: true,
     chunkSizeWarningLimit: 500,
+    watch: null,
     ...raw
   }
 
   // handle special build targets
   if (resolved.target === 'modules') {
-    // https://caniuse.com/es6-module
-    resolved.target = ['es2019', 'edge16', 'firefox60', 'chrome61', 'safari11']
-  } else if (resolved.target === 'esnext' && resolved.minify !== 'esbuild') {
+    // Support browserslist
+    // "defaults and supports es6-module and supports es6-module-dynamic-import",
+    resolved.target = [
+      'es2019',
+      'edge88',
+      'firefox78',
+      'chrome87',
+      'safari13.1'
+    ]
+  } else if (resolved.target === 'esnext' && resolved.minify === 'terser') {
     // esnext + terser: limit to es2019 so it can be minified by terser
     resolved.target = 'es2019'
   }
@@ -233,21 +265,21 @@ export function resolveBuildOptions(raw?: BuildOptions): ResolvedBuildOptions {
   return resolved
 }
 
-export function resolveBuildPlugins(
-  config: ResolvedConfig
-): { pre: Plugin[]; post: Plugin[] } {
+export function resolveBuildPlugins(config: ResolvedConfig): {
+  pre: Plugin[]
+  post: Plugin[]
+} {
   const options = config.build
   return {
     pre: [
       buildHtmlPlugin(config),
       commonjsPlugin(options.commonjsOptions),
       dataURIPlugin(),
-      buildDefinePlugin(config),
-      dynamicImportVars({
-        warnOnError: true,
-        exclude: [/node_modules/]
-      }),
-      ...(options.rollupOptions.plugins || [])
+      dynamicImportVars(options.dynamicImportVarsOptions),
+      assetImportMetaUrlPlugin(config),
+      ...(options.rollupOptions.plugins
+        ? (options.rollupOptions.plugins.filter((p) => !!p) as Plugin[])
+        : [])
     ],
     post: [
       buildImportAnalysisPlugin(config),
@@ -269,7 +301,7 @@ export function resolveBuildPlugins(
 let parallelCallCounts = 0
 // we use a separate counter to track since the call may error before the
 // bundle is even pushed.
-const paralellBuilds: RollupBuild[] = []
+const parallelBuilds: RollupBuild[] = []
 
 /**
  * Bundles the app for production.
@@ -277,29 +309,33 @@ const paralellBuilds: RollupBuild[] = []
  */
 export async function build(
   inlineConfig: InlineConfig = {}
-): Promise<RollupOutput | RollupOutput[]> {
+): Promise<RollupOutput | RollupOutput[] | RollupWatcher> {
   parallelCallCounts++
   try {
     return await doBuild(inlineConfig)
   } finally {
     parallelCallCounts--
     if (parallelCallCounts <= 0) {
-      paralellBuilds.forEach((bundle) => bundle.close())
-      paralellBuilds.length = 0
+      await Promise.all(parallelBuilds.map((bundle) => bundle.close()))
+      parallelBuilds.length = 0
     }
   }
 }
 
 async function doBuild(
   inlineConfig: InlineConfig = {}
-): Promise<RollupOutput | RollupOutput[]> {
+): Promise<RollupOutput | RollupOutput[] | RollupWatcher> {
   const config = await resolveConfig(inlineConfig, 'build', 'production')
   const options = config.build
   const ssr = !!options.ssr
   const libOptions = options.lib
 
   config.logger.info(
-    chalk.cyan(`building ${ssr ? `SSR bundle ` : ``}for ${config.mode}...`)
+    chalk.cyan(
+      `vite v${require('vite/package.json').version} ${chalk.green(
+        `building ${ssr ? `SSR bundle ` : ``}for ${config.mode}...`
+      )}`
+    )
   )
 
   const resolve = (p: string) => path.resolve(config.root, p)
@@ -319,40 +355,69 @@ async function doBuild(
   const outDir = resolve(options.outDir)
 
   // inject ssr arg to plugin load/transform hooks
-  const plugins = (ssr
-    ? config.plugins.map((p) => injectSsrFlagToHooks(p))
-    : config.plugins) as Plugin[]
+  const plugins = (
+    ssr ? config.plugins.map((p) => injectSsrFlagToHooks(p)) : config.plugins
+  ) as Plugin[]
 
   // inject ssrExternal if present
   const userExternal = options.rollupOptions?.external
-  const external = ssr
-    ? resolveExternal(resolveSSRExternal(config), userExternal)
-    : userExternal
+  let external = userExternal
+  if (ssr) {
+    // see if we have cached deps data available
+    let knownImports: string[] | undefined
+    if (config.cacheDir) {
+      const dataPath = path.join(config.cacheDir, '_metadata.json')
+      try {
+        const data = JSON.parse(
+          fs.readFileSync(dataPath, 'utf-8')
+        ) as DepOptimizationMetadata
+        knownImports = Object.keys(data.optimized)
+      } catch (e) {}
+    }
+    if (!knownImports) {
+      // no dev deps optimization data, do a fresh scan
+      knownImports = Object.keys((await scanImports(config)).deps)
+    }
+    external = resolveExternal(
+      resolveSSRExternal(config, knownImports),
+      userExternal
+    )
+  }
 
   const rollup = require('rollup') as typeof Rollup
+  const rollupOptions: RollupOptions = {
+    input,
+    preserveEntrySignatures: ssr
+      ? 'allow-extension'
+      : libOptions
+      ? 'strict'
+      : false,
+    ...options.rollupOptions,
+    plugins,
+    external,
+    onwarn(warning, warn) {
+      onRollupWarning(warning, warn, config)
+    }
+  }
+
+  const outputBuildError = (e: RollupError) => {
+    config.logger.error(
+      chalk.red(`${e.plugin ? `[${e.plugin}] ` : ''}${e.message}`)
+    )
+    if (e.id) {
+      const loc = e.loc ? `:${e.loc.line}:${e.loc.column}` : ''
+      config.logger.error(`file: ${chalk.cyan(`${e.id}${loc}`)}`)
+    }
+    if (e.frame) {
+      config.logger.error(chalk.yellow(e.frame))
+    }
+  }
 
   try {
-    const bundle = await rollup.rollup({
-      input,
-      preserveEntrySignatures: ssr
-        ? 'allow-extension'
-        : libOptions
-        ? 'strict'
-        : false,
-      ...options.rollupOptions,
-      plugins,
-      external,
-      onwarn(warning, warn) {
-        onRollupWarning(warning, warn, config)
-      }
-    })
-
-    paralellBuilds.push(bundle)
-
     const pkgName = libOptions && getPkgName(config.root)
 
-    const generate = (output: OutputOptions = {}) => {
-      return bundle[options.write ? 'write' : 'generate']({
+    const buildOutputOptions = (output: OutputOptions = {}): OutputOptions => {
+      return {
         dir: outDir,
         format: ssr ? 'cjs' : 'es',
         exports: ssr ? 'named' : 'auto',
@@ -361,7 +426,7 @@ async function doBuild(
         entryFileNames: ssr
           ? `[name].js`
           : libOptions
-          ? `${pkgName}.${output.format || `es`}.js`
+          ? resolveLibFilename(libOptions, output.format || 'es', pkgName)
           : path.posix.join(options.assetsDir, `[name].[hash].js`),
         chunkFileNames: libOptions
           ? `[name].js`
@@ -381,31 +446,6 @@ async function doBuild(
             ? createMoveToVendorChunkFn(config)
             : undefined,
         ...output
-      })
-    }
-
-    if (options.write) {
-      // warn if outDir is outside of root
-      if (fs.existsSync(outDir)) {
-        const inferEmpty = options.emptyOutDir === null
-        if (
-          options.emptyOutDir ||
-          (inferEmpty && normalizePath(outDir).startsWith(config.root + '/'))
-        ) {
-          emptyDir(outDir)
-        } else if (inferEmpty) {
-          config.logger.warn(
-            chalk.yellow(
-              `\n${chalk.bold(`(!)`)} outDir ${chalk.white.dim(
-                outDir
-              )} is not inside project root and will not be emptied.\n` +
-                `Use --emptyOutDir to override.\n`
-            )
-          )
-        }
-      }
-      if (fs.existsSync(config.publicDir)) {
-        copyDir(config.publicDir, outDir)
       }
     }
 
@@ -415,6 +455,73 @@ async function doBuild(
       libOptions,
       config.logger
     )
+
+    // watch file changes with rollup
+    if (config.build.watch) {
+      config.logger.info(chalk.cyanBright(`\nwatching for file changes...`))
+
+      const output: OutputOptions[] = []
+      if (Array.isArray(outputs)) {
+        for (const resolvedOutput of outputs) {
+          output.push(buildOutputOptions(resolvedOutput))
+        }
+      } else {
+        output.push(buildOutputOptions(outputs))
+      }
+
+      const watcherOptions = config.build.watch
+      const watcher = rollup.watch({
+        ...rollupOptions,
+        output,
+        watch: {
+          ...watcherOptions,
+          chokidar: {
+            ignored: [
+              '**/node_modules/**',
+              '**/.git/**',
+              ...(watcherOptions?.chokidar?.ignored || [])
+            ],
+            ignoreInitial: true,
+            ignorePermissionErrors: true,
+            ...watcherOptions.chokidar
+          }
+        }
+      })
+
+      watcher.on('event', (event) => {
+        if (event.code === 'BUNDLE_START') {
+          config.logger.info(chalk.cyanBright(`\nbuild started...`))
+          if (options.write) {
+            prepareOutDir(outDir, options.emptyOutDir, config)
+          }
+        } else if (event.code === 'BUNDLE_END') {
+          event.result.close()
+          config.logger.info(chalk.cyanBright(`built in ${event.duration}ms.`))
+        } else if (event.code === 'ERROR') {
+          outputBuildError(event.error)
+        }
+      })
+
+      // stop watching
+      watcher.close()
+
+      return watcher
+    }
+
+    // write or generate files with rollup
+    const bundle = await rollup.rollup(rollupOptions)
+    parallelBuilds.push(bundle)
+
+    const generate = (output: OutputOptions = {}) => {
+      return bundle[options.write ? 'write' : 'generate'](
+        buildOutputOptions(output)
+      )
+    }
+
+    if (options.write) {
+      prepareOutDir(outDir, options.emptyOutDir, config)
+    }
+
     if (Array.isArray(outputs)) {
       const res = []
       for (const output of outputs) {
@@ -422,20 +529,39 @@ async function doBuild(
       }
       return res
     } else {
-      return generate(outputs)
+      return await generate(outputs)
     }
   } catch (e) {
-    config.logger.error(
-      chalk.red(`${e.plugin ? `[${e.plugin}] ` : ``}${e.message}`)
-    )
-    if (e.id) {
-      const loc = e.loc ? `:${e.loc.line}:${e.loc.column}` : ``
-      config.logger.error(`file: ${chalk.cyan(`${e.id}${loc}`)}`)
-    }
-    if (e.frame) {
-      config.logger.error(chalk.yellow(e.frame))
-    }
+    outputBuildError(e)
     throw e
+  }
+}
+
+function prepareOutDir(
+  outDir: string,
+  emptyOutDir: boolean | null,
+  config: ResolvedConfig
+) {
+  if (fs.existsSync(outDir)) {
+    if (
+      emptyOutDir == null &&
+      !normalizePath(outDir).startsWith(config.root + '/')
+    ) {
+      // warn if outDir is outside of root
+      config.logger.warn(
+        chalk.yellow(
+          `\n${chalk.bold(`(!)`)} outDir ${chalk.white.dim(
+            outDir
+          )} is not inside project root and will not be emptied.\n` +
+            `Use --emptyOutDir to override.\n`
+        )
+      )
+    } else if (emptyOutDir !== false) {
+      emptyDir(outDir, ['.git'])
+    }
+  }
+  if (config.publicDir && fs.existsSync(config.publicDir)) {
+    copyDir(config.publicDir, outDir)
   }
 }
 
@@ -453,14 +579,14 @@ function createMoveToVendorChunkFn(config: ResolvedConfig): GetManualChunk {
     if (
       id.includes('node_modules') &&
       !isCSSRequest(id) &&
-      !hasDynamicImporter(id, getModuleInfo, cache)
+      staticImportedByEntry(id, getModuleInfo, cache)
     ) {
       return 'vendor'
     }
   }
 }
 
-function hasDynamicImporter(
+function staticImportedByEntry(
   id: string,
   getModuleInfo: GetModuleInfo,
   cache: Map<string, boolean>,
@@ -479,15 +605,31 @@ function hasDynamicImporter(
     cache.set(id, false)
     return false
   }
-  if (mod.dynamicImporters.length) {
+
+  if (mod.isEntry) {
     cache.set(id, true)
     return true
   }
-  const someImporterHas = mod.importers.some((importer) =>
-    hasDynamicImporter(importer, getModuleInfo, cache, importStack.concat(id))
+  const someImporterIs = mod.importers.some((importer) =>
+    staticImportedByEntry(
+      importer,
+      getModuleInfo,
+      cache,
+      importStack.concat(id)
+    )
   )
-  cache.set(id, someImporterHas)
-  return someImporterHas
+  cache.set(id, someImporterIs)
+  return someImporterIs
+}
+
+export function resolveLibFilename(
+  libOptions: LibraryOptions,
+  format: ModuleFormat,
+  pkgName: string
+): string {
+  return typeof libOptions.fileName === 'function'
+    ? libOptions.fileName(format)
+    : `${libOptions.fileName || pkgName}.${format}.js`
 }
 
 function resolveBuildOutputs(
@@ -533,7 +675,7 @@ export function onRollupWarning(
   warning: RollupWarning,
   warn: WarningHandler,
   config: ResolvedConfig
-) {
+): void {
   if (warning.code === 'UNRESOLVED_IMPORT') {
     const id = warning.source
     const importer = warning.importer

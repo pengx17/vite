@@ -1,8 +1,13 @@
 import path from 'path'
-import { Loader, Plugin } from 'esbuild'
+import { Loader, Plugin, ImportKind } from 'esbuild'
 import { KNOWN_ASSET_TYPES } from '../constants'
 import { ResolvedConfig } from '..'
-import { isRunningWithYarnPnp, flattenId, normalizePath } from '../utils'
+import {
+  isRunningWithYarnPnp,
+  flattenId,
+  normalizePath,
+  isExternalUrl
+} from '../utils'
 import { browserExternalId } from '../plugins/resolve'
 import { ExportsData } from '.'
 
@@ -12,25 +17,40 @@ const externalTypes = [
   'less',
   'sass',
   'scss',
-  'style',
+  'styl',
   'stylus',
+  'pcss',
   'postcss',
   // known SFC types
   'vue',
   'svelte',
+  'marko',
+  // JSX/TSX may be configured to be compiled differently from how esbuild
+  // handles it by default, so exclude them as well
+  'jsx',
+  'tsx',
   ...KNOWN_ASSET_TYPES
 ]
 
 export function esbuildDepPlugin(
   qualified: Record<string, string>,
   exportsData: Record<string, ExportsData>,
-  config: ResolvedConfig
+  config: ResolvedConfig,
+  ssr?: boolean
 ): Plugin {
+  // default resolver which prefers ESM
   const _resolve = config.createResolver({ asSrc: false })
+
+  // cjs resolver that prefers Node
+  const _resolveRequire = config.createResolver({
+    asSrc: false,
+    isRequire: true
+  })
 
   const resolve = (
     id: string,
     importer: string,
+    kind: ImportKind,
     resolveDir?: string
   ): Promise<string | undefined> => {
     let _importer
@@ -42,7 +62,8 @@ export function esbuildDepPlugin(
       // map importer ids to file paths for correct resolution
       _importer = importer in qualified ? qualified[importer] : importer
     }
-    return _resolve(id, _importer)
+    const resolver = kind.startsWith('require') ? _resolveRequire : _resolve
+    return resolver(id, _importer, undefined, ssr)
   }
 
   return {
@@ -53,8 +74,8 @@ export function esbuildDepPlugin(
         {
           filter: new RegExp(`\\.(` + externalTypes.join('|') + `)(\\?.*)?$`)
         },
-        async ({ path: id, importer }) => {
-          const resolved = await resolve(id, importer)
+        async ({ path: id, importer, kind }) => {
+          const resolved = await resolve(id, importer, kind)
           if (resolved) {
             return {
               path: resolved,
@@ -64,42 +85,44 @@ export function esbuildDepPlugin(
         }
       )
 
-      function resolveEntry(id: string, isEntry: boolean) {
+      function resolveEntry(id: string) {
         const flatId = flattenId(id)
         if (flatId in qualified) {
-          return isEntry
-            ? {
-                path: flatId,
-                namespace: 'dep'
-              }
-            : {
-                path: path.resolve(qualified[flatId])
-              }
+          return {
+            path: flatId,
+            namespace: 'dep'
+          }
         }
       }
 
       build.onResolve(
         { filter: /^[\w@][^:]/ },
-        async ({ path: id, importer }) => {
-          const isEntry = !importer
-          // ensure esbuild uses our resolved entires
+        async ({ path: id, importer, kind }) => {
+          // ensure esbuild uses our resolved entries
           let entry
           // if this is an entry, return entry namespace resolve result
-          if ((entry = resolveEntry(id, isEntry))) return entry
-
-          // check if this is aliased to an entry - also return entry namespace
-          const aliased = await _resolve(id, undefined, true)
-          if (aliased && (entry = resolveEntry(aliased, isEntry))) {
-            return entry
+          if (!importer) {
+            if ((entry = resolveEntry(id))) return entry
+            // check if this is aliased to an entry - also return entry namespace
+            const aliased = await _resolve(id, undefined, true)
+            if (aliased && (entry = resolveEntry(aliased))) {
+              return entry
+            }
           }
 
-          // use vite resolver
-          const resolved = await resolve(id, importer)
+          // use vite's own resolver
+          const resolved = await resolve(id, importer, kind)
           if (resolved) {
             if (resolved.startsWith(browserExternalId)) {
               return {
                 path: id,
                 namespace: 'browser-external'
+              }
+            }
+            if (isExternalUrl(resolved)) {
+              return {
+                path: resolved,
+                external: true
               }
             }
             return {
@@ -127,7 +150,8 @@ export function esbuildDepPlugin(
         }
 
         let contents = ''
-        const [imports, exports] = exportsData[id]
+        const data = exportsData[id]
+        const [imports, exports] = data
         if (!imports.length && !exports.length) {
           // cjs
           contents += `export default require("${relativePath}");`
@@ -135,7 +159,11 @@ export function esbuildDepPlugin(
           if (exports.includes('default')) {
             contents += `import d from "${relativePath}";export default d;`
           }
-          if (exports.length > 1 || exports[0] !== 'default') {
+          if (
+            data.hasReExports ||
+            exports.length > 1 ||
+            exports[0] !== 'default'
+          ) {
             contents += `\nexport * from "${relativePath}"`
           }
         }
@@ -168,9 +196,9 @@ export function esbuildDepPlugin(
       if (isRunningWithYarnPnp) {
         build.onResolve(
           { filter: /.*/ },
-          async ({ path, importer, resolveDir }) => ({
+          async ({ path, importer, kind, resolveDir }) => ({
             // pass along resolveDir for entries
-            path: await resolve(path, importer, resolveDir)
+            path: await resolve(path, importer, kind, resolveDir)
           })
         )
         build.onLoad({ filter: /.*/ }, async (args) => ({

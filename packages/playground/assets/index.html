@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 
+<link rel="icon" href="data:," />
 <link rel="stylesheet" href="/raw.css" />
 
 <h1>Assets</h1>
@@ -12,6 +13,9 @@
   <script src="/raw.js"></script>
   <li class="raw-css">
     Raw CSS from publicDir should load (this should be red)
+  </li>
+  <li>
+    <img src="/white space.png" />
   </li>
 </ul>
 
@@ -30,6 +34,16 @@
 <div class="css-url-relative">
   <span style="background: #fff">CSS background (relative)</span>
 </div>
+<div class="css-image-set-relative">
+  <span style="background: #fff"
+    >CSS background with image-set() (relative)</span
+  >
+</div>
+<div class="css-image-set-without-url-call">
+  <span style="background: #fff"
+    >CSS background with image-set() (relative)</span
+  >
+</div>
 <div class="css-url-relative-at-imported">
   <span style="background: #fff"
     >CSS background (relative from @imported file in different dir)</span
@@ -46,6 +60,24 @@
 </div>
 <div class="css-url-quotes-base64-inline">
   <span style="background: #fff">CSS background (base64 inline in prod)</span>
+</div>
+<div class="css-url-same-line">
+  <span style="background: #fff"
+    >CSS background (multiple urls on same line)</span
+  >
+</div>
+<div class="css-url-aliased">
+  <span style="background: #fff">CSS background (aliased)</span>
+</div>
+
+<h2>Image Src Set</h2>
+<div>
+  <img
+    class="img-src-set"
+    src="./nested/asset.png"
+    srcset="./nested/asset.png 1x, ./nested/asset.png 2x"
+    alt=""
+  />
 </div>
 
 <h2>SVG Fragments</h2>
@@ -86,6 +118,20 @@
 <h2>?url import</h2>
 <code class="url"></code>
 
+<h2>new URL('...', import.meta.url)</h2>
+<img class="import-meta-url-img" />
+<code class="import-meta-url"></code>
+
+<h2>new URL(`./${dynamic}`, import.meta.url)</h2>
+<p>
+  <img class="dynamic-import-meta-url-img-1" />
+  <code class="dynamic-import-meta-url-1"></code>
+</p>
+<p>
+  <img class="dynamic-import-meta-url-img-2" />
+  <code class="dynamic-import-meta-url-2"></code>
+</p>
+
 <script type="module">
   import './css/fonts.css'
   import './css/css-url.css'
@@ -111,6 +157,19 @@
 
   import fooUrl from './foo.js?url'
   text('.url', fooUrl)
+
+  const metaUrl = new URL('./nested/asset.png', import.meta.url)
+  text('.import-meta-url', metaUrl)
+  document.querySelector('.import-meta-url-img').src = metaUrl
+
+  function testDynamicImportMetaUrl(name, i) {
+    const metaUrl = new URL(`./nested/${name}.png`, import.meta.url)
+    text(`.dynamic-import-meta-url-${i}`, metaUrl)
+    document.querySelector(`.dynamic-import-meta-url-img-${i}`).src = metaUrl
+  }
+
+  testDynamicImportMetaUrl('icon', 1)
+  testDynamicImportMetaUrl('asset', 2)
 
   function text(el, text) {
     document.querySelector(el).textContent = text

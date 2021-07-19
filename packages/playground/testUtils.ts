@@ -4,9 +4,12 @@
 
 import fs from 'fs'
 import path from 'path'
-import slash from 'slash'
 import colors from 'css-color-names'
 import { ElementHandle } from 'playwright-chromium'
+
+export function slash(p: string): string {
+  return p.replace(/\\/g, '/')
+}
 
 export const isBuild = !!process.env.VITE_TEST_BUILD
 
@@ -20,8 +23,8 @@ Object.keys(colors).forEach((color) => {
 })
 
 function componentToHex(c: number): string {
-  var hex = c.toString(16)
-  return hex.length == 1 ? '0' + hex : hex
+  const hex = c.toString(16)
+  return hex.length === 1 ? '0' + hex : hex
 }
 
 function rgbToHex(rgb: string): string {
@@ -59,8 +62,16 @@ export async function getBg(el: string | ElementHandle) {
   return el.evaluate((el) => getComputedStyle(el as Element).backgroundImage)
 }
 
-export function editFile(filename: string, replacer: (str: string) => string) {
-  if (isBuild) return
+export function readFile(filename: string) {
+  return fs.readFileSync(path.resolve(testDir, filename), 'utf-8')
+}
+
+export function editFile(
+  filename: string,
+  replacer: (str: string) => string,
+  runInBuild: boolean = false
+): void {
+  if (isBuild && !runInBuild) return
   filename = path.resolve(testDir, filename)
   const content = fs.readFileSync(filename, 'utf-8')
   const modified = replacer(content)
@@ -100,9 +111,10 @@ export function readManifest(base = '') {
  */
 export async function untilUpdated(
   poll: () => string | Promise<string>,
-  expected: string
+  expected: string,
+  runInBuild = false
 ) {
-  if (isBuild) return
+  if (isBuild && !runInBuild) return
   const maxTries = process.env.CI ? 100 : 50
   for (let tries = 0; tries < maxTries; tries++) {
     const actual = (await poll()) || ''
@@ -114,3 +126,8 @@ export async function untilUpdated(
     }
   }
 }
+
+/**
+ * Send the rebuild complete message in build watch
+ */
+export { notifyRebuildComplete } from '../../scripts/jestPerTestSetup'
